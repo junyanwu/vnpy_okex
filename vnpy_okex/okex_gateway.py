@@ -76,7 +76,8 @@ STATUS_OKEX2VT: Dict[str, Status] = {
 ORDERTYPE_OKEX2VT: Dict[str, OrderType] = {
     "limit": OrderType.LIMIT,
     "fok": OrderType.FOK,
-    "ioc": OrderType.FAK
+    "ioc": OrderType.FAK,
+    "market": OrderType.MARKET
 }
 ORDERTYPE_VT2OKEX: Dict[OrderType, str] = {v: k for k, v in ORDERTYPE_OKEX2VT.items()}
 
@@ -716,7 +717,7 @@ class OkexWebsocketPrivateApi(WebsocketClient):
             contract: ContractData = symbol_contract_map.get(order.symbol, None)
             if contract:
                 trade_volume = round_to(trade_volume, contract.min_volume)
-
+            # todo: offset=order.offset 为None导致的问题
             trade: TradeData = TradeData(
                 symbol=order.symbol,
                 exchange=order.exchange,
@@ -793,6 +794,7 @@ class OkexWebsocketPrivateApi(WebsocketClient):
 
             msg: str = d["sMsg"]
             self.gateway.write_log(f"委托失败，状态码：{code}，信息：{msg}")
+            print(f"委托下单回报 委托失败，状态码：{code}，信息：{msg}")
 
     def on_cancel_order(self, packet: dict) -> None:
         """委托撤单回报"""
@@ -801,6 +803,7 @@ class OkexWebsocketPrivateApi(WebsocketClient):
             code: str = packet["code"]
             msg: str = packet["msg"]
             self.gateway.write_log(f"撤单失败，状态码：{code}，信息：{msg}")
+            print(f"委托撤单回报 撤单失败，状态码：{code}，信息：{msg}")
             return
 
         # 业务逻辑处理失败
@@ -812,6 +815,8 @@ class OkexWebsocketPrivateApi(WebsocketClient):
 
             msg: str = d["sMsg"]
             self.gateway.write_log(f"撤单失败，状态码：{code}，信息：{msg}")
+            print(f"委托撤单回报 撤单失败，状态码：{code}，信息：{msg}")
+
 
     def login(self) -> None:
         """用户登录"""
@@ -856,6 +861,7 @@ class OkexWebsocketPrivateApi(WebsocketClient):
     def send_order(self, req: OrderRequest) -> str:
         """委托下单"""
         # 检查委托类型是否正确
+        print('send_order:', req)
         if req.type not in ORDERTYPE_VT2OKEX:
             self.gateway.write_log(f"委托失败，不支持的委托类型：{req.type.value}")
             return
@@ -872,10 +878,12 @@ class OkexWebsocketPrivateApi(WebsocketClient):
         orderid = f"{self.connect_time}{count_str}"
 
         # 生成委托请求
+        side, posSide = get_side_posSide(req)
         args: dict = {
             "instId": req.symbol,
             "clOrdId": orderid,
-            "side": DIRECTION_VT2OKEX[req.direction],
+            "side": side,
+            "posSide": posSide,
             "ordType": ORDERTYPE_VT2OKEX[req.type],
             "px": str(req.price),
             "sz": str(req.volume)
@@ -892,6 +900,7 @@ class OkexWebsocketPrivateApi(WebsocketClient):
             "op": "order",
             "args": [args]
         }
+        print("send_order okex_req:", okex_req)
         self.send_packet(okex_req)
 
         # 推送提交中事件
@@ -967,3 +976,32 @@ def parse_order_data(data: dict, gateway_name: str) -> OrderData:
         gateway_name=gateway_name,
     )
     return order
+
+
+def get_side_posSide(req: OrderRequest):
+    """
+    开多：买入开多（side 填写 buy； posSide 填写 long ）
+    平多：卖出平多（side 填写 sell；posSide 填写 long ）
+    开空：卖出开空（side 填写 sell； posSide 填写 short ）
+    平空：买入平空（side 填写 buy； posSide 填写 short ）
+    """
+    side = ''
+    posSide = ''
+    # 开多 buy
+    if req.direction == Direction.LONG and req.offset == Offset.OPEN:
+        side = 'buy'
+        posSide = 'long'
+    # 平多 sell
+    elif req.direction == Direction.SHORT and req.offset == Offset.CLOSE:
+        side = 'sell'
+        posSide = 'long'
+    # 开空 short
+    elif req.direction == Direction.SHORT and req.offset == Offset.OPEN:
+        side = 'sell'
+        posSide = 'short'
+    # 平空
+    elif req.direction == Direction.LONG and req.offset == Offset.CLOSE:
+        side = 'buy'
+        posSide = 'short'
+
+    return side, posSide
