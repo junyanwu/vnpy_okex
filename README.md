@@ -1,3 +1,7 @@
+# update
+
+主要修改了一些常量及请求参数，目前可开多空双向
+
 # vn.py框架的OKEX底层接口
 
 <p align="center">
